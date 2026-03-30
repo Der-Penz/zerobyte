@@ -300,7 +300,7 @@ describe("stop backup", () => {
 		const repository = await createTestRepository();
 		const schedule = await createTestBackupSchedule({
 			volumeId: volume.id,
-		repositoryId: repository.id,
+			repositoryId: repository.id,
 		});
 
 		const releaseLock = await repoMutex.acquireExclusive(repository.id, "test");
@@ -347,7 +347,7 @@ describe("stop backup", () => {
 			"No backup is currently running for this schedule",
 		);
 
-		const updatedSchedule = await backupsService.getScheduleById(schedule.id);
+		const updatedSchedule = await getScheduleByIdOrShortId(schedule.id);
 		expect(updatedSchedule.lastBackupAt).toBe(previousLastBackupAt);
 		expect(updatedSchedule.lastBackupStatus).toBe("warning");
 		expect(updatedSchedule.lastBackupError).toBe("Backup was stopped by the user");
