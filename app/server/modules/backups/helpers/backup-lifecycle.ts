@@ -167,6 +167,7 @@ export async function finalizeSuccessfulBackup(
 		lastBackupStatus: finalStatus,
 		lastBackupError: finalStatus === "warning" ? warningDetails : null,
 		nextBackupAt: ctx.schedule.cronExpression ? calculateNextRun(ctx.schedule.cronExpression) : null,
+		failureRetryCount: 0, // Reset retry count on successful backup
 	});
 
 	if (finalStatus === "warning") {
@@ -209,6 +210,53 @@ export async function handleBackupFailure(
 	const errorMessage = toMessage(error);
 	const errorDetails = toErrorDetails(error);
 
+	// Determine if this should be retried
+	const schedule = partialContext?.schedule;
+	const currentRetryCount = schedule?.failureRetryCount ?? 0;
+	const maxRetries = schedule?.maxRetries ?? 5;
+	const shouldRetry = currentRetryCount < maxRetries;
+
+	if (shouldRetry) {
+		// Schedule retry 1 hour from now
+		const nextBackupAt = Date.now() + 60 * 60 * 1000; // 1 hour in milliseconds
+
+		await scheduleQueries.updateStatus(scheduleId, organizationId, {
+			lastBackupAt: Date.now(),
+			lastBackupStatus: "error",
+			lastBackupError: errorDetails,
+			nextBackupAt,
+			failureRetryCount: currentRetryCount + 1,
+		});
+
+		logger.warn(
+			`Backup ${schedule?.name} failed. Scheduling retry ${currentRetryCount + 1}/${maxRetries} for 1 hour from now: ${errorMessage}`,
+		);
+
+		if (partialContext?.volume && partialContext?.repository) {
+			serverEvents.emit("backup:completed", {
+				organizationId,
+				scheduleId: schedule!.shortId,
+				volumeName: partialContext.volume.name,
+				repositoryName: partialContext.repository.name,
+				status: "error",
+			});
+
+			notificationsService
+				.sendBackupNotification(scheduleId, "failure", {
+					volumeName: partialContext.volume.name,
+					repositoryName: partialContext.repository.name,
+					scheduleName: schedule!.name,
+					error: `${errorDetails}\n\nRetrying in 1 hour (attempt ${currentRetryCount + 1}/${maxRetries})`,
+				})
+				.catch((notifError) => {
+					logger.error(`Failed to send backup failure notification: ${toMessage(notifError)}`);
+				});
+		}
+
+		return;
+	}
+
+	// Max retries reached - mark as permanently failed
 	await scheduleQueries.updateStatus(scheduleId, organizationId, {
 		lastBackupAt: Date.now(),
 		lastBackupStatus: "error",
@@ -219,15 +267,15 @@ export async function handleBackupFailure(
 		return;
 	}
 
-	const { schedule, volume, repository } = partialContext;
+	const { volume, repository } = partialContext;
 
 	logger.error(
-		`Backup ${schedule.name} failed for volume ${volume.name} to repository ${repository.name}: ${errorMessage}`,
+		`Backup ${schedule?.name} failed after ${maxRetries} retries for volume ${volume.name} to repository ${repository.name}: ${errorMessage}`,
 	);
 
 	serverEvents.emit("backup:completed", {
 		organizationId,
-		scheduleId: schedule.shortId,
+		scheduleId: schedule!.shortId,
 		volumeName: volume.name,
 		repositoryName: repository.name,
 		status: "error",
@@ -237,8 +285,8 @@ export async function handleBackupFailure(
 		.sendBackupNotification(scheduleId, "failure", {
 			volumeName: volume.name,
 			repositoryName: repository.name,
-			scheduleName: schedule.name,
-			error: errorDetails,
+			scheduleName: schedule!.name,
+			error: `${errorDetails}\n\nFailed after ${maxRetries} retry attempts.`,
 		})
 		.catch((notifError) => {
 			logger.error(`Failed to send backup failure notification: ${toMessage(notifError)}`);
