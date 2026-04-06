@@ -313,6 +313,7 @@ export const backupSchedulesTable = sqliteTable("backup_schedules_table", {
 	sortOrder: int("sort_order", { mode: "number" }).notNull().default(0),
 	failureRetryCount: int("failure_retry_count").notNull().default(0),
 	maxRetries: int("max_retries").notNull().default(5),
+	retryDelay: int("retry_delay").notNull().default(3600000), // 1 hour in milliseconds
 	createdAt: int("created_at", { mode: "number" })
 		.notNull()
 		.default(sql`(unixepoch() * 1000)`),

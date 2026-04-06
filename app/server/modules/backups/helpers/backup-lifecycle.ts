@@ -214,11 +214,12 @@ export async function handleBackupFailure(
 	const schedule = partialContext?.schedule;
 	const currentRetryCount = schedule?.failureRetryCount ?? 0;
 	const maxRetries = schedule?.maxRetries ?? 5;
+	const retryDelay = schedule?.retryDelay ?? 3600000; // Default 1 hour
 	const shouldRetry = currentRetryCount < maxRetries;
 
 	if (shouldRetry) {
-		// Schedule retry 1 hour from now
-		const nextBackupAt = Date.now() + 60 * 60 * 1000; // 1 hour in milliseconds
+		// Schedule retry after the specified delay
+		const nextBackupAt = Date.now() + retryDelay;
 
 		await scheduleQueries.updateStatus(scheduleId, organizationId, {
 			lastBackupAt: Date.now(),
@@ -228,8 +229,9 @@ export async function handleBackupFailure(
 			failureRetryCount: currentRetryCount + 1,
 		});
 
+		const delayHours = Math.round(retryDelay / (60 * 60 * 1000) * 10) / 10; // Round to 1 decimal
 		logger.warn(
-			`Backup ${schedule?.name} failed. Scheduling retry ${currentRetryCount + 1}/${maxRetries} for 1 hour from now: ${errorMessage}`,
+			`Backup ${schedule?.name} failed. Scheduling retry ${currentRetryCount + 1}/${maxRetries} in ${delayHours} hours: ${errorMessage}`,
 		);
 
 		if (partialContext?.volume && partialContext?.repository) {
@@ -246,7 +248,7 @@ export async function handleBackupFailure(
 					volumeName: partialContext.volume.name,
 					repositoryName: partialContext.repository.name,
 					scheduleName: schedule!.name,
-					error: `${errorDetails}\n\nRetrying in 1 hour (attempt ${currentRetryCount + 1}/${maxRetries})`,
+					error: `${errorDetails}\n\nRetrying in ${delayHours} hours (attempt ${currentRetryCount + 1}/${maxRetries})`,
 				})
 				.catch((notifError) => {
 					logger.error(`Failed to send backup failure notification: ${toMessage(notifError)}`);

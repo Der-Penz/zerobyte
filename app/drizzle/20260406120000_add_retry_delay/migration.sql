@@ -1,0 +1,1 @@
+ALTER TABLE `backup_schedules_table` ADD `retry_delay` integer DEFAULT 3600000 NOT NULL;
